@@ -47,12 +47,12 @@ class Estudiante(models.Model):
     correo = models.EmailField(max_length=100) 
 
     def __str__(self):
-        return self.nombre 
+        return f"{self.codigo} - {self.nombre}" 
 
 class Prestamo(models.Model):
     estudiante = models.ForeignKey(Estudiante, on_delete=models.PROTECT)
     copia = models.ForeignKey(Copia, on_delete=models.PROTECT)
-    fecha_prestamo = models.DateField()
+    fecha_prestamo = models.DateField(auto_now_add=True)
     fecha_limite = models.DateField()
     fecha_entregado = models.DateField(null=True, blank=True)
 
