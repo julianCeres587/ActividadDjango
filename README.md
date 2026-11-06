@@ -352,4 +352,82 @@ Por el contrario, en una relación muchos a muchos (`ManyToManyField`) como la d
 | **Préstamo con estudiante y libro** (`p.estudiante.nombre`, `p.copia.libro.titulo`) | 19 consultas | **1 consulta** | `select_related("estudiante", "copia__libro")` |
 | **Libro con lista de autores** (`[a.nombre for a in libro.autores.all()]`) | 6 consultas | **2 consultas** | `prefetch_related("autores")` |
 
+---
+
+## Fase 7: El Diagrama de Relaciones con Mermaid
+
+Mermaid permite representar visualmente el modelo entidad-relación del proyecto en formato texto nativo que GitHub renderiza directamente como diagrama interactivo.
+
+### 1. Diagrama Entidad-Relación (`erDiagram`)
+
+```mermaid
+erDiagram
+    CATEGORIA ||--o{ LIBRO : clasifica
+    AUTOR }o--o{ LIBRO : escribe
+    LIBRO ||--o{ COPIA : tiene
+    ESTUDIANTE ||--o{ PRESTAMO : solicita
+    COPIA ||--o{ PRESTAMO : se_presta_en
+
+    CATEGORIA {
+        int id PK
+        string nombre
+    }
+
+    AUTOR {
+        int id PK
+        string nombre
+    }
+
+    LIBRO {
+        string isbn PK
+        string titulo
+        int anio_publicacion
+        string idioma
+        int categoria_id FK
+    }
+
+    COPIA {
+        string codigo_inventario PK
+        string libro_isbn FK
+        string nota
+    }
+
+    ESTUDIANTE {
+        int codigo PK
+        string nombre
+        string correo
+    }
+
+    PRESTAMO {
+        int id PK
+        int estudiante_id FK
+        string copia_codigo_inventario FK
+        date fecha_prestamo
+        date fecha_limite
+        date fecha_entregado
+    }
+```
+
+### 2. Explicación de las relaciones y cardinalidades
+
+* **`CATEGORIA ||--o{ LIBRO : clasifica`**:  
+  Una categoría temática agrupa cero o muchos libros (`o{`). Cada libro pertenece de forma obligatoria a exactamente una categoría (`||`), modelada como `ForeignKey(Categoria, on_delete=models.PROTECT)`.
+* **`AUTOR }o--o{ LIBRO : escribe`**:  
+  Un autor puede haber escrito cero o muchos libros (`}o`), y un libro puede haber sido escrito por uno o varios autores coautores (`o{`). Se implementa mediante una relación muchos a muchos `ManyToManyField(Autor)`.
+* **`LIBRO ||--o{ COPIA : tiene`**:  
+  Un libro en abstracto puede tener cero o múltiples ejemplares físicos en inventario (`o{`), mientras que cada copia física corresponde obligatoriamente a una única obra (`||`), mediante `ForeignKey(Libro, on_delete=models.PROTECT)`.
+* **`ESTUDIANTE ||--o{ PRESTAMO : solicita`**:  
+  Un estudiante registrado en el sistema puede solicitar cero o muchos préstamos a lo largo del tiempo (`o{`). Cada préstamo está asociado de forma obligatoria a un único estudiante (`||`), mediante `ForeignKey(Estudiante, on_delete=models.PROTECT)`.
+* **`COPIA ||--o{ PRESTAMO : se_presta_en`**:  
+  Una copia física puede haber sido prestada cero o muchas veces a lo largo de su vida útil (`o{`). Cada transacción de préstamo involucra exactamente una copia física (`||`), mediante `ForeignKey(Copia, on_delete=models.PROTECT)`.
+
+### 3. Revisión y correcciones del diagrama generado por IA
+
+Siguiendo las pautas de la guía, se solicitó la generación preliminar del diagrama a un agente de Inteligencia Artificial pasando el archivo `models.py`. Al verificar minuciosamente el resultado contra la implementación real, se detectaron y corrigieron los siguientes puntos:
+
+1. **Claves Primarias personalizadas:** La IA generó por defecto claves `id` autoincrementales para todos los modelos. Se corrigió manualmente para reflejar las claves reales declaradas en `models.py`: `isbn` en `Libro`, `codigo_inventario` en `Copia` y `codigo` en `Estudiante`.
+2. **Cardinalidad del ManyToMany (`Autor` - `Libro`):** La IA modeló inicialmente una relación de 1 a N (`AUTOR ||--o{ LIBRO`), perdiendo la naturaleza de coautoría. Se corrigió a muchos a muchos (`AUTOR }o--o{ LIBRO : escribe`).
+3. **Dirección de las claves foráneas:** En la relación entre `Copia` y `Libro`, la IA invirtió el extremo del uno (`COPIA ||--o{ LIBRO`), sugiriendo que un ejemplar contenía muchos libros. Se corrigió colocando el uno (`||`) en `LIBRO` y muchos (`o{`) en `COPIA`.
+4. **Campos anulables (`null=True`):** En `Prestamo`, el campo `fecha_entregado` es opcional (`null=True, blank=True`). La IA lo había marcado implícitamente como mandatorio.
+5. **Cardinalidad de préstamos por copia física:** Al leer la regla *"una copia no puede estar prestada a dos personas al mismo tiempo"*, la IA intentó forzar una relación 1 a 1 (`COPIA ||--o| PRESTAMO`). Se corrigió a `||--o{` aclarando que una copia acumula múltiples préstamos en el tiempo (histórico) y que la unicidad simultánea se gobierna con el `UniqueConstraint` condicional en la base de datos.
  
