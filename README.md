@@ -1,15 +1,85 @@
-Fase 2
+## Fase 2: Del Enunciado a los Modelos y Regla de Negocio
 
--Elijan una, implémentenla y prueben que falla al intentar prestar dos veces la misma copia. En el README
-explicarán por qué la eligieron. La documentación oficial está en docs.djangoproject.com.
+### 1. Entidades y Modelado
+Se diseñaron 6 modelos para representar la biblioteca universitaria, resolviendo las relaciones requeridas:
+* **`Categoria`:** Clasificación temática de los libros (`Novela`, `Ingeniería`, `Historia`, etc.).
+* **`Autor`:** Creadores de las obras.
+* **`Libro`:** Obra intelectual en abstracto (título, ISBN, año, idioma y categoría). Posee una relación `ManyToManyField` con `Autor` (un libro puede tener varios autores y un autor varios libros).
+* **`Copia`:** Ejemplar físico tangible en estantería (`ForeignKey` a `Libro`), con código de inventario único y condición (`nuevo`, `usado`, `dañado`).
+* **`Estudiante`:** Usuario de la biblioteca (código estudiantil como PK, nombre y correo).
+* **`Prestamo`:** Transacción que asocia a un estudiante con una copia física concreta, fecha de préstamo, fecha límite y fecha de entrega real.
 
-RTA: Al tratar de prestar dos veces la misma copia,sale "Please correct the error below.   Esta copia ya tiene un prestamo activo", que es como lo definimos en el models.py, enm prestamo, para su constraint.  
-Se escogió aplicar la regla de copia prestada con la restricción en la base de datos con constraints, pues el método clean puede estar sujeto a que si se guarda con el shell con .save(), no se ejecuta a no ser que se llame full_clean por uno mismo, en cambio, con el constraint en la base de datos tiene la ventaja de que siempre se cumple, sin importar si el préstamo se crea desde el admin o el shell, además de que la implementación es más corta, queda en pocas líneas dentro de Meta.
+---
 
+### 2. Implementación de la Regla: "Una copia no puede estar prestada a dos personas al mismo tiempo"
 
-Fase 4
+Para garantizar que una copia física no se preste simultáneamente a dos usuarios, se evaluaron dos alternativas que ofrece Django:
 
-Se agrega el filtro EstadoPrestamoFilter, pues en el admin se puede filtrar con fecha_entregado = No date, pero se trata de un caso de una bibliotecaria sin conocimientos técnicos. 
+| Enfoque | Ventajas | Limitaciones |
+| :--- | :--- | :--- |
+| **Validación con `clean()`** | Permite mensajes de error personalizados y validaciones en formularios/admin. | **Vulnerable fuera del admin:** Si se guarda desde el shell mediante `.save()`, no se ejecuta a menos que se invoque manualmente `full_clean()`. |
+| **Restricción en BD con `UniqueConstraint` (Elegida)** | **Integridad absoluta:** La restricción vive en el motor de base de datos. Se cumple sin excepción desde el admin, el shell, APIs o scripts externos. | Requiere definir la restricción condicional en `class Meta`. |
+
+#### Decisión adoptada y código implementado
+Se implementó mediante un **`UniqueConstraint` condicional** dentro de `class Meta` en el modelo `Prestamo`:
+
+```python
+class Meta:
+    constraints = [
+        models.UniqueConstraint(
+            fields=["copia"],
+            condition=models.Q(fecha_entregado__isnull=True),
+            name="una_copia_por_prestamo_activo",
+            violation_error_message="Esta copia ya tiene un préstamo activo"
+        )
+    ]
+```
+
+> **Justificación:**  
+> Se eligió la restricción a nivel de base de datos (`constraints`) porque garantiza que la regla de negocio nunca se viole, sin depender del punto de entrada de los datos (sea panel de administración, shell de Python o futuros servicios). Además, la implementación es declarativa, limpia y se integra directamente con las migraciones de Django.
+
+#### Evidencia de funcionamiento
+Al intentar registrar un segundo préstamo para una copia física cuya fecha de entrega aún está vacía (`fecha_entregado is NULL`), Django y la base de datos bloquean la operación mostrando:
+```text
+Please correct the error below.
+* Esta copia ya tiene un préstamo activo
+```
+
+---
+
+## Fase 4: Personalización del Panel de Administración
+
+El panel de administración fue configurado para satisfacer tanto los requerimientos técnicos de la actividad como las necesidades prácticas de una bibliotecaria sin conocimientos técnicos.
+
+### 1. Resumen de personalizaciones por modelo
+
+| Modelo | `list_display` (Columnas) | `search_fields` (Búsqueda) | `list_filter` (Filtros laterales) | Características especiales |
+| :--- | :--- | :--- | :--- | :--- |
+| **`Categoria`** | `id`, `nombre` | `nombre` | — | Búsqueda rápida por nombre. |
+| **`Autor`** | `id`, `nombre` | `nombre` | — | Búsqueda rápida por autor. |
+| **`Libro`** | `titulo`, `isbn`, `categoria`, `anio_publicacion` | `titulo`, `isbn`, `autores__nombre` | `categoria`, `anio_publicacion`, `idioma` | **`inlines = [CopiaInline]`** (gestión de copias físicas desde la página del libro). |
+| **`Copia`** | `codigo_inventario`, `libro`, `nota` | `codigo_inventario`, `libro__titulo` | `nota` | Búsqueda cruzada por código o título del libro. |
+| **`Estudiante`** | `codigo`, `nombre`, `correo` | `codigo`, `nombre`, `correo` | — | Búsqueda rápida por código o nombre del alumno. |
+| **`Prestamo`** | `estudiante`, `copia`, `fecha_prestamo`, `fecha_limite`, `fecha_entregado` | `estudiante__nombre`, `estudiante__codigo`, `copia__codigo_inventario`, `copia__libro__titulo` | `fecha_prestamo`, `fecha_limite`, `EstadoPrestamoFiltro` | **`readonly_fields = ('fecha_prestamo',)`** y acción masiva **`marcar_devueltos`**. |
+
+---
+
+### 2. Solución al Mini Reto: La Bibliotecaria
+
+Para que la bibliotecaria trabaje con agilidad y sin confusiones, se implementaron cuatro mejoras clave:
+
+1. **Búsqueda inmediata de estudiantes:**  
+   En `PrestamoAdmin` y `EstudianteAdmin`, la caja de búsqueda permite encontrar alumnos tipeando su nombre o su código estudiantil (`search_fields = ('estudiante__nombre', 'estudiante__codigo')`).
+2. **Diferenciación inequívoca de copias físicas:**  
+   Se definió un método `__str__` descriptivo en `Copia` (`"Copia SO-001 del libro Cien años de soledad"`) e inline tabular dentro de `Libro`, evitando que se confundan copias físicas de libros distintos al momento de prestarlas.
+3. **Filtro intuitivo de estado (`EstadoPrestamoFiltro`):**  
+   Por defecto, filtrar en Django por `fecha_entregado = None` muestra etiquetas poco claras como *"No date"*. Se creó un `SimpleListFilter` personalizado que expone dos opciones legibles:
+   * **`Sin entregar:`** filtra préstamos con `fecha_entregado__isnull=True`.
+   * **`Entregado:`** filtra préstamos con `fecha_entregado__isnull=False`.
+4. **Acción masiva para devolver libros (`marcar_devueltos`):**  
+   Permite seleccionar una o varias filas de préstamos pendientes en la lista y, con un solo clic en la barra de acciones, asignar automáticamente la fecha actual (`date.today()`) a `fecha_entregado`.
+
+--- 
 
 
 ## Fase 5: Consultas con el ORM
