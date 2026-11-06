@@ -28,7 +28,7 @@ Sigue estos pasos para clonar, configurar y ejecutar el proyecto en tu máquina 
 
 ### 1. Clonar el repositorio y entrar al directorio
 ```bash
-git clone https://github.com/diegoardila05/ActividadDjango.git
+git clone https://github.com/julianCeres587/ActividadDjango.git
 cd ActividadDjango
 ```
 
@@ -537,7 +537,7 @@ En cambio, en una relación muchos a muchos (`ManyToManyField`) como `Libro` y `
 ## 10. Equipo y Reflexión
 
 ### Integrantes del equipo
-* **Diego Fernando Ardila Bueno** (diego.ardilabueno@gmail.com)
+* **Juan Diego Ardila** (juandiegoab@ufps.edu.co)
 * **Juan Barajas** (juanbq1989@gmail.com)
 * **Julián Cáceres** (juliancaceres415@gmail.com)
 
