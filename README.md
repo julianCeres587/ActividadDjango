@@ -538,8 +538,8 @@ En cambio, en una relación muchos a muchos (`ManyToManyField`) como `Libro` y `
 
 ### Integrantes del equipo
 * **Juan Diego Ardila** (juandiegoab@ufps.edu.co)
-* **Juan Barajas** (juanbq1989@gmail.com)
-* **Julián Cáceres** (juliancaceres415@gmail.com)
+* **Juan Carlos Barajas** (juancarlosbaqu@ufps.edu.co)
+* **Julián Camilo Cáceres** (juliancaceres415@gmail.com)
 
 ---
 
