@@ -180,4 +180,106 @@ A continuación se registran los 10 retos ejecutados en el shell interactivo de 
   - ¿Existe el libro 'Fundación'?: `True`
   - Autores después de borrar: `[]`
 - **Explicación técnica:** La relación entre `Libro` y `Autor` está definida como `ManyToManyField(Autor)`. En las bases de datos relacionales y en Django, esto crea una tabla intermedia oculta (`biblioteca_libro_autores`). Al borrar una instancia de `Autor`, Django elimina en cascada las filas en la tabla intermedia que asocian a ese autor con los libros correspondientes. No se borra la entidad `Libro` porque el libro tiene vida independiente. En Django, a diferencia de `ForeignKey`, los campos `ManyToManyField` no requieren ni aceptan el parámetro `on_delete` directamente en el campo porque la integridad referencial opera sobre la tabla intermedia de unión.
+
+
+## Fase 6: Reto final: Consultas repetidas (Problema N+1)
+
+El problema de las consultas N+1 ocurre cuando se itera sobre una lista de registros y, por cada uno, se accede a un modelo relacionado que no fue precargado, obligando al ORM a disparar una consulta SQL adicional por cada elemento del bucle.
+
+Para medir con precisión la cantidad de consultas SQL ejecutadas se utilizó `CaptureQueriesContext(connection)` desde el shell de Django.
+
+---
+
+### Caso 1: Recorrer préstamos accediendo al estudiante y al libro de la copia
+
+#### 1. Código sin optimizar
+```python
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
+from biblioteca.models import Prestamo
+
+with CaptureQueriesContext(connection) as ctx:
+    for p in Prestamo.objects.all():
+        print(p.estudiante.nombre, p.copia.libro.titulo)
+
+print(len(ctx), "consultas")
+```
+- **Predicción antes de medir:**
+  - Tenemos 6 préstamos ($N = 6$).
+  - 1 consulta inicial para obtener todos los préstamos: `SELECT * FROM biblioteca_prestamo`.
+  - Por cada iteración:
+    - 1 consulta para resolver la ForeignKey `p.estudiante`.
+    - 1 consulta para resolver la ForeignKey `p.copia`.
+    - 1 consulta para resolver la ForeignKey `p.copia.libro`.
+  - Predicción total: $1 + (6 \times 3) = 19$ consultas.
+- **Medición real:** **19 consultas**.
+
+#### 2. Corrección con `select_related`
+Dado que `estudiante`, `copia` y `copia.libro` son relaciones `ForeignKey` (hacia un solo objeto), se pueden precargar mediante un solo `SQL JOIN`:
+```python
+with CaptureQueriesContext(connection) as ctx:
+    for p in Prestamo.objects.select_related("estudiante", "copia__libro").all():
+        print(p.estudiante.nombre, p.copia.libro.titulo)
+
+print(len(ctx), "consultas")
+```
+- **Medición después de optimizar:** **1 consulta** (Django resolvió todas las tablas en un único `JOIN`).
+
+---
+
+### Caso 2: Mostrar cada libro con la lista de sus autores
+
+#### 1. Código sin optimizar
+```python
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
+from biblioteca.models import Libro
+
+with CaptureQueriesContext(connection) as ctx:
+    for libro in Libro.objects.all():
+        autores = ", ".join([a.nombre for a in libro.autores.all()])
+        print(f"{libro.titulo}: {autores}")
+
+print(len(ctx), "consultas")
+```
+- **Predicción antes de medir:**
+  - Tenemos 5 libros en la base de datos ($N = 5$).
+  - 1 consulta inicial para traer todos los libros.
+  - 1 consulta individual por cada libro para consultar la relación `libro.autores.all()` mediante la tabla intermedia.
+  - Predicción total: $1 + 5 = 6$ consultas.
+- **Medición real:** **6 consultas**.
+
+#### 2. Corrección con `prefetch_related`
+Como la relación entre `Libro` y `Autor` es de muchos a muchos (`ManyToManyField`), se debe utilizar `prefetch_related`:
+```python
+with CaptureQueriesContext(connection) as ctx:
+    for libro in Libro.objects.prefetch_related("autores").all():
+        autores = ", ".join([a.nombre for a in libro.autores.all()])
+        print(f"{libro.titulo}: {autores}")
+
+print(len(ctx), "consultas")
+```
+- **Medición después de optimizar:** **2 consultas** (1 consulta para todos los libros y 1 consulta separada con `WHERE libro_id IN (...)` para todos sus autores; Django hace el ensamble en memoria en Python).
+
+---
+
+### Respuesta a la pregunta: ¿Por qué `select_related` no sirve para el caso de los libros y sus autores?
+
+`select_related` funciona ejecutando un `JOIN` relacional dentro de la misma sentencia SQL. Esto es eficiente para relaciones hacia un único objeto (`ForeignKey` o `OneToOneField`), pues cada registro de la tabla principal se asocia con a lo sumo una fila de la tabla relacionada y el número de filas del resultado no se multiplica.
+
+Por el contrario, en una relación muchos a muchos (`ManyToManyField`) como la de `Libro` y `Autor`:
+1. Un `JOIN` generaría un producto cartesiano multiplicando las filas: si un libro tiene 4 autores, se generarían 4 filas duplicando los datos del libro en el conjunto devuelto por la base de datos.
+2. Si intentamos forzar `select_related('autores')`, Django lanza una excepción inmediata:  
+   `django.core.exceptions.FieldError: Invalid field name(s) given in select_related: 'autores'. Choices are: categoria`
+3. Por diseño, Django reserva para las relaciones "a muchos" el método `prefetch_related`, que realiza exactamente 2 consultas limpias sin duplicidad ni sobrecarga en el motor SQL y asocia los objetos directamente en memoria.
+
+---
+
+### Tabla comparativa de optimización
+
+| Consulta | Número de consultas antes | Número después | Técnica utilizada |
+| :--- | :---: | :---: | :--- |
+| **Préstamo con estudiante y libro** (`p.estudiante.nombre`, `p.copia.libro.titulo`) | 19 consultas | **1 consulta** | `select_related("estudiante", "copia__libro")` |
+| **Libro con lista de autores** (`[a.nombre for a in libro.autores.all()]`) | 6 consultas | **2 consultas** | `prefetch_related("autores")` |
+
  
